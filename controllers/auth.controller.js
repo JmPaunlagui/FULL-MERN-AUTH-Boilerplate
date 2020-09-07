@@ -1,88 +1,77 @@
-const User = require('../models/auth.model');
+const User = require('../models/account.model');
 const expressJwt = require('express-jwt');
 const _ = require('lodash');
 const { OAuth2Client } = require('google-auth-library');
 const fetch = require('node-fetch');
-
 const { validationResult } = require('express-validator');
 const jwt = require('jsonwebtoken');
 const expressJWT = require('express-jwt');
 const { errorHandler } = require('../helpers/dbErrorHandling');
-const sgMail = require('@sendgrid/mail');
-sgMail.setApiKey(process.env.MAIL_KEY);
+const sgMail = require('nodemailer');
 
-
+console.log(process.env.EMAIL, process.env.PASSWORD)
+const transporter = sgMail.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.EMAIL,
+    pass: process.env.PASSWORD
+  }
+});
 
 exports.registerController = (req, res) => {
   const { name, email, password } = req.body;
   const errors = validationResult(req);
-
   if (!errors.isEmpty()) {
-    const firstError = errors.array().map(error => error.msg)[0];
-    return res.status(422).json({
-      errors: firstError
-    });
-  } else {
-    User.findOne({
-      email
-    }).exec((err, user) => {
-      if (user) {
-        return res.status(400).json({
-          errors: 'Email is taken'
-        });
-      }
-    });
-
-    const token = jwt.sign(
-      {
-        name,
-        email,
-        password
-      },
-      process.env.JWT_ACCOUNT_ACTIVATION,
-      {
-        expiresIn: '5m'
-      }
-    );
-
-    const emailData = {
-      from: process.env.EMAIL_FROM,
-      to: email,
-      subject: 'Account activation link',
-      html: `
-                <h1>Please use the following to activate your account</h1>
-                <p>${process.env.CLIENT_URL}/users/activate/${token}</p>
-                <hr />
-                <p>This email may containe sensetive information</p>
-                <p>${process.env.CLIENT_URL}</p>
-            `
-    };
-
-    sgMail
-      .send(emailData)
-      .then(sent => {
-        return res.json({
-          message: `Email has been sent to ${email}`
-        });
-      })
-      .catch(err => {
-        return res.status(400).json({
-          success: false,
-          errors: errorHandler(err)
-        });
+      const firstError = errors.array().map(error => error.msg)[0];
+      return res.status(422).json({
+        errors: firstError
       });
+  } else { 
+      User.findOne({
+          email
+      }).exec((user) => {
+          if(user) return res.status(400).json({errors: 'Email is taken'})
+          else{
+              const token = jwt.sign({
+                name,
+                email,
+                password
+              },process.env.JWT_SECRET,{
+                  expiresIn: 24
+              })
+              const emailData = {
+                  from: process.env.EMAIL_FROM,
+                  to: email,
+                  subject: 'Account activation link',
+                  html: `
+                            <h1>Please use the following to activate your account</h1>
+                            <p>${process.env.CLIENT_URL}/users/activate/${token}</p>
+                            <hr />
+                            <p>This email may containe sensetive information</p>
+                            <p>${process.env.CLIENT_URL}</p>
+                        `
+                };
+                transporter.sendMail(emailData, (err, data) =>{
+                  if(err) return console.log(err)
+                  else return res.json({data})
+                })
+             
+          }              
+           
+      })
   }
+      
 };
 
 exports.activationController = (req, res) => {
   const { token } = req.body;
 
   if (token) {
-    jwt.verify(token, process.env.JWT_ACCOUNT_ACTIVATION, (err, decoded) => {
+    jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
       if (err) {
         console.log('Activation error');
         return res.status(401).json({
-          errors: 'Expired link. Signup again'
+          errors: err
         });
       } else {
         const { name, email, password } = jwt.decode(token);
@@ -327,6 +316,7 @@ exports.resetPasswordController = (req, res) => {
 };
 
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT);
+console.log(process.env.GOOGLE_CLIENT);
 // Google Login
 exports.googleController = (req, res) => {
   const { idToken } = req.body;
